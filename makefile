@@ -17,11 +17,17 @@ local/lib/libogg.a: thirdparty/build.sh
 local/lib/libtheora.a: thirdparty/build.sh
 	cd thirdparty && ./build.sh && cd ..
 
+local/lib/libvorbis.a: thirdparty/build.sh
+	cd thirdparty && ./build.sh && cd ..
+
+local/lib/libsydneyaudio.a: thirdparty/build.sh
+	cd thirdparty && ./build.sh && cd ..
+
 plogg.o: plogg.cpp
 	g++ -g -c $(INCLUDE) -Ilocal/include -o plogg.o plogg.cpp
 
-plogg: plogg.o local/lib/libogg.a
-	g++ -g -o plogg plogg.o local/lib/libtheora.a local/lib/libogg.a -lSDL $(LIBS)
+plogg: plogg.o local/lib/libogg.a local/lib/libtheora.a local/lib/libvorbis.a local/lib/libsydneyaudio.a
+	g++ -g -o plogg plogg.o local/lib/libsydneyaudio.a local/lib/libvorbis.a local/lib/libtheora.a local/lib/libogg.a -lSDL $(LIBS)
 
 clean: 
 	rm *.o plogg
