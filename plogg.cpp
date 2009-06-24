@@ -36,20 +36,20 @@ public:
   StreamMap mStreams;  
 
 public:
-  bool read_page(istream& stream, ogg_sync_state* oy, ogg_page* og);
+  bool read_page(istream& stream, ogg_sync_state* state, ogg_page* page);
   void play(istream& stream);
 };
 
-bool OggDecoder::read_page(istream& stream, ogg_sync_state* oy, ogg_page* og) {
+bool OggDecoder::read_page(istream& stream, ogg_sync_state* state, ogg_page* page) {
   int ret = 0;
   if (!stream.good())
     return false;
 
-  while(ogg_sync_pageout(oy, og) != 1) {
+  while(ogg_sync_pageout(state, page) != 1) {
     // Returns a buffer that can be written too
     // with the given size. This buffer is stored
     // in the ogg synchronisation structure.
-    char* buffer = ogg_sync_buffer(oy, 4096);
+    char* buffer = ogg_sync_buffer(state, 4096);
     assert(buffer);
 
     // Read from the file into the buffer
@@ -62,26 +62,25 @@ bool OggDecoder::read_page(istream& stream, ogg_sync_state* oy, ogg_page* og) {
 
     // Update the synchronisation layer with the number
     // of bytes written to the buffer
-    ret = ogg_sync_wrote(oy, bytes);
+    ret = ogg_sync_wrote(state, bytes);
     assert(ret == 0);
   }
   return true;
 }
 
 void OggDecoder::play(istream& stream) {
-  ogg_sync_state oy;
-  ogg_page og;
-  ogg_stream_state to;
+  ogg_sync_state state;
+  ogg_page page;
   int packets = 0;
 
-  int ret = ogg_sync_init(&oy);
+  int ret = ogg_sync_init(&state);
   assert(ret == 0);
   
-  while (read_page(stream, &oy, &og)) {
-    int serial = ogg_page_serialno(&og);
+  while (read_page(stream, &state, &page)) {
+    int serial = ogg_page_serialno(&page);
     OggStream* stream = 0;
 
-    if(ogg_page_bos(&og)) {
+    if(ogg_page_bos(&page)) {
       // At the beginning of the stream, read headers
       // Initialize the stream, giving it the serial
       // number of the stream for this page.
@@ -95,7 +94,7 @@ void OggDecoder::play(istream& stream) {
     stream = mStreams[serial];
 
     // Add a complete page to the bitstream
-    ret = ogg_stream_pagein(&stream->mState, &og);
+    ret = ogg_stream_pagein(&stream->mState, &page);
     assert(ret == 0);
       
     // Return a complete packet of data from the stream
@@ -118,7 +117,7 @@ void OggDecoder::play(istream& stream) {
   }
 
   // Cleanup
-  ret = ogg_sync_clear(&oy);
+  ret = ogg_sync_clear(&state);
   assert(ret == 0);
 }
 
