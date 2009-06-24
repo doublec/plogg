@@ -1,0 +1,206 @@
+<p>
+  Reading data from an Ogg file is relatively simple. The file format
+  is well documented
+  in <a href="http://www.ietf.org/rfc/rfc3533.txt">RFC 3533</a>. I
+  showed how to read the format using
+  JavaScript <a href="http://www.bluishcoder.co.nz/2009/06/reading-ogg-files-with-javascript.html">
+    in a previous post</a>.
+</p>
+<p>For C and C++ programs it's easier to use
+  the <a href="http://xiph.org">xiph.org</a> libraries. There are
+  libraries for decoding specific formats (libvorbis, libtheora) and
+  there is a library for reading data from Ogg files (libogg).
+</p>
+<p>I'm prototyping some approaches to improve the performance of the
+  Firefox Ogg video playback and while I'm at it I'll write some posts
+  on using these libraries to decode/play Ogg files. Hopefully it'll
+  prove useful to others using them and I can get some feedback on
+  usage.
+</p>
+<p>All the code for this is in
+  the <a href="http://github.com/doublec/plogg/tree">plogg</a> git
+  repository on github. The 'master' branch contains the work in
+  progress player that I'll describe in a series of posts, and there
+  are branches specific to the examples in each post.
+</p>
+<p>The <a href="http://www.xiph.org/ogg/doc/libogg/">libogg
+    documentation</a> describes the API that I'll be using in this
+    post. All that this example will do is read an Ogg file, read each
+    stream in the file and count the number of packets for that
+    stream. It prints the number of packets. It doesn't decode the
+    data or do anything really useful. That'll come later.
+</p>
+<p>You can think of an Ogg file as containing logical streams of
+  data. Each stream has a serial number that is unique within the file
+  to identify it. A file containing Vorbis and Theora data will have
+  two streams. A Vorbis stream and a Theora stream.</p>
+<p>Each stream is split up into packets. The packets
+  contain the raw data for the stream. The process of decoding a
+  stream involves getting a packet from it, decoding that data, doing
+  something with it, and repeating.</p>
+<p>That describes the logical format. The physical format of the Ogg
+  file is split into pages of data. Each physical page contains some
+  part of the data for one stream. </p>
+<p>The process of reading and decoding an Ogg file is to read pages
+  from the file, associating them with the streams they belong to. At
+  some point we then go through the pages held in the stream and
+  obtain the packets from it. This is the process the code in this
+  example follows.</p>
+<p>The first thing we need to do when reading an Ogg file is find the
+first page of data. We use
+  a <a href="http://www.xiph.org/ogg/doc/libogg/ogg_sync_state.html">ogg_sync_state</a>
+  structure to keep track of search for the page data. This needs to
+  be initialized
+  with <a href="http://www.xiph.org/ogg/doc/libogg/ogg_sync_init.html">ogg_sync_init</a>
+  and later cleaned up
+  with <a href="http://www.xiph.org/ogg/doc/libogg/ogg_sync_clear.html">ogg_sync_clear</a>:
+<pre>ifstream file("foo.ogg", ios::in | ios::binary);
+ogg_sync_state state;
+int ret = ogg_sync_init(&state);
+assert(ret==0);
+...look for page...
+</pre>
+<p>Note that the libogg functions return an error code which should be
+  checked, A result of '0' generally indicates success. We want to
+  obtain a complete page of Ogg data. This is held in
+  an <a href="http://www.xiph.org/ogg/doc/libogg/ogg_page.html">ogg_page</a>
+  structure. The process of obtaining this structure is to do the
+  following steps:
+<ol>
+  <li>Call <a href="http://www.xiph.org/ogg/doc/libogg/ogg_sync_pageout.html">ogg_sync_pageout</a>. This
+  will take any data current stored in the ogg_sync_state object and
+  store it in the ogg_page. It will return a result indicating when
+  the entire pages data has been read and the ogg_page can be used. It
+  needs to be called first to initialize buffers. It gets called
+  repeatedly as we read data from the file.</li>
+  <li>Call <a href="http://www.xiph.org/ogg/doc/libogg/ogg_sync_buffer.html">ogg_sync_buffer</a>
+  to obtain an area of memory we can reading data from the file
+  into. We pass the size of the buffer. This buffer is reused
+  on each call and will be resized if needed if a larger buffer size
+  is asked for later.</li>
+  <li>Read data from the file into the buffer obtained above.</li>
+  <li>Call <a href="http://www.xiph.org/ogg/doc/libogg/ogg_sync_wrote.html">ogg_sync_wrote</a>
+  to tell libogg how much data we copied into the buffer.</li>
+  <li>Resume from the first step, calling ogg_sync_buffer. This will
+  copy the data from the buffer into the page, and return '1' if a
+  full page of data is available.</li>
+</ol>
+<p>Here's the code following these steps:</p>
+<pre>ogg_page page;
+while(ogg_sync_pageout(&amp;state, &amp;page) != 1) {
+  char* buffer = ogg_sync_buffer(oy, 4096);
+  assert(buffer);
+
+  file.read(buffer, 4096);
+  int bytes = stream.gcount();
+  if (bytes == 0) {
+    // End of file
+    break;
+  }
+
+  int ret = ogg_sync_wrote(&state, bytes);
+  assert(ret == 0);
+}
+</pre>
+<p>We need to keep track of the logical streams within the file. These
+  are identified by serial number and this number is obtained from the
+  page. I create a C++ map to associate the serial number with an
+  OggStream object which holds information I want associated with the
+  stream. In later examples this will hold data needed for the Theora
+  and Vorbis decoding process.
+</p>
+<pre>class OggStream
+{
+  ...
+  int mSerial;
+  ogg_stream_state mState;
+  int mPacketCount;
+  ...
+};
+
+typedef map<int, OggStream*> StreamMap; 
+</pre>
+<p>Each stream has
+  an <a href="http://www.xiph.org/ogg/doc/libogg/ogg_stream_state.html">ogg_stream_state</a>
+  object that is used to keep track of the data read that belongs to
+  the stream. We're storing this in the OggStream object that we
+  associated with the stream serial number. Once we've read a page as
+  described above we need to tell libogg to add this page of data to
+  the stream.
+</p>
+<pre>
+StreamMap streams;
+ogg_page page = ...obtained previously...;
+int serial = ogg_page_serialno(&page);
+OggStream* stream = 0;
+if (ogg_page_bos(&page) {
+  stream = new OggStream(serial);
+  int ret = ogg_stream_init(&stream->mState, serial);
+  assert(ret == 0);
+  streams[serial] = stream;
+}
+else
+  stream = streams[serial];
+
+int ret = ogg_stream_pagein(&stream->mState, &page);
+assert(ret == 0);
+</pre>
+
+<p>This code
+  uses <a href="http://www.xiph.org/ogg/doc/libogg/ogg_page_serialno.html">ogg_page_serialno</a>
+  to get the serial number of the page we just read. If it is the
+  beginning of the stream
+  (<a href="http://www.xiph.org/ogg/doc/libogg/ogg_page_bos.html">ogg_page_bos</a>)
+  then we create a new OggStream object, initialize the stream's state
+  with <a href="http://www.xiph.org/ogg/doc/libogg/ogg_stream_init.html">ogg_stream_init</a>,
+  and store it in out streams map. If it's not the beginning of the
+  stream we just get our existing entry in the map. The final call to
+  <a href="http://www.xiph.org/ogg/doc/libogg/ogg_stream_pagein.html">ogg_stream_pagein</a>
+  inserts the page of data into the streams state object. Once this is
+  done we can start looking for completed packets of data and decode them. 
+</p>
+<p>To decode the data from a stream we need to retrieve a packet from
+  it. The steps for doing this are:<p>
+<ul>
+  <li>Call <a href="http://www.xiph.org/ogg/doc/libogg/ogg_stream_packetout.html">ogg_stream_packetout</a>. This
+  will return a value indicating if a packet of data is available in
+  the stream. If it is not then we need to read another page
+  (following the same steps previously) and add it to the stream,
+  calling ogg_stream_packetout again until it tells us a packet is
+  available. The packet's data is stored in
+  an <a href="http://www.xiph.org/ogg/doc/libogg/ogg_packet.html">ogg_packet</a>
+  object.</li>
+  <li>Do something with the packet data. This usually involves calling
+  libvorbis or libtheora routines to decode the data. In this example
+  we're just counting the packets.</li>
+  <li>Repeat until all packets in all streams are consumed.</li>
+</ul>
+<pre>while (..read a page...) {
+  ...put page in stream...  
+  ogg_packet packet;
+  int ret = ogg_stream_packetout(&stream->mState, &packet);	
+  if (ret == 0) {
+    // Need more data to be able to complete the packet
+    continue;
+  }
+  else if (ret == -1) {
+    // We are out of sync and there is a gap in the data.
+    // We lost a page somewhere.
+    break;
+  }
+
+  // A packet is available, this is what we pass to the vorbis or
+  // theora libraries to decode.
+  stream->mPacketCount++;
+}
+</pre>
+<p>That's all there is to reading an Ogg file. There are more libogg
+  functions to get data out of the stream, identify end of stream, and
+  various other useful functions but this covers the basics. Try out
+  the example program in the github repository for more information.
+</p>
+<p>Note that the libogg functions don't require reading from a
+  file. You can use these routines with any data you've obtained. From
+  a socket, from memory, etc.</p>
+<p>In the next post about reading Ogg files I'll go through using
+  libtheora to decode the video data and display it.</p> 
