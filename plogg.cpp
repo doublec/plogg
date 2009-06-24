@@ -1,17 +1,24 @@
 // Copyright (C) 2009, Chris Double. All Rights Reserved.
 // See the license at the end of this file.
 #include <cassert>
+#include <cmath>
 #include <map>
 #include <iostream>
 #include <fstream>
 #include <ogg/ogg.h>
 #include <theora/theora.h>
 #include <theora/theoradec.h>
+#include <vorbis/codec.h>
 #include <SDL/SDL.h>
+
+extern "C" {
+#include <sydney_audio.h>
+}
 
 using namespace std;
 
 enum StreamType {
+  TYPE_VORBIS,
   TYPE_THEORA,
   TYPE_UNKNOWN
 };
@@ -38,6 +45,21 @@ public:
   }   
 };
 
+class VorbisDecode {
+public:
+  vorbis_info mInfo;
+  vorbis_comment mComment;
+  vorbis_dsp_state mDsp;
+  vorbis_block mBlock;
+
+public:
+  VorbisDecode()
+  {
+    vorbis_info_init(&mInfo);
+    vorbis_comment_init(&mComment);    
+  }
+};
+
 class OggStream
 {
 public:
@@ -46,6 +68,7 @@ public:
   StreamType mType;
   bool mHeadersRead;
   TheoraDecode mTheora;
+  VorbisDecode mVorbis;
 
 public:
   OggStream(int serial = -1) : 
@@ -69,33 +92,44 @@ public:
   StreamMap mStreams;  
   SDL_Surface* mSurface;
   SDL_Overlay* mOverlay;
+  sa_stream_t* mAudio;
 
 private:
   bool read_page(istream& stream, ogg_sync_state* state, ogg_page* page);
   void handle_packet(OggStream* stream, ogg_packet* packet);
   void handle_theora_data(OggStream* stream, ogg_packet* packet);
   void handle_theora_header(OggStream* stream, ogg_packet* packet);
+  void handle_vorbis_data(OggStream* stream, ogg_packet* packet);
+  void handle_vorbis_header(OggStream* stream, ogg_packet* packet);
 
 public:
   OggDecoder() :
     mSurface(0),
-    mOverlay(0)
+    mOverlay(0),
+    mAudio(0)
   {
   }
 
   ~OggDecoder() {
     if (mSurface)
       SDL_FreeSurface(mSurface);
+    if (mAudio) {
+      sa_stream_drain(mAudio);
+      //      sa_stream_destroy(mAudio);
+    }
   }
   void play(istream& stream);
 };
 
 bool OggDecoder::read_page(istream& stream, ogg_sync_state* state, ogg_page* page) {
   int ret = 0;
-  if (!stream.good())
-    return false;
 
-  while(ogg_sync_pageout(state, page) != 1) {
+  // If we've hit end of file we still need to continue processing
+  // any remaining pages that we've got buffered.
+  if (!stream.good())
+    return ogg_sync_pageout(state, page) == 1;
+
+  while((ret = ogg_sync_pageout(state, page)) != 1) {
     // Returns a buffer that can be written too
     // with the given size. This buffer is stored
     // in the ogg synchronisation structure.
@@ -106,8 +140,8 @@ bool OggDecoder::read_page(istream& stream, ogg_sync_state* state, ogg_page* pag
     stream.read(buffer, 4096);
     int bytes = stream.gcount();
     if (bytes == 0) {
-      // End of file
-      return false;
+      // End of file. 
+      continue;
     }
 
     // Update the synchronisation layer with the number
@@ -147,23 +181,21 @@ void OggDecoder::play(istream& stream) {
     ret = ogg_stream_pagein(&stream->mState, &page);
     assert(ret == 0);
       
-    // Return a complete packet of data from the stream
+    // Process all available packets in the stream. When we
+    // run out of packets, the while loop exits and we read more
+    // pages if possible.
     ogg_packet packet;
-    ret = ogg_stream_packetout(&stream->mState, &packet);	
-    if (ret == 0) {
-      // Need more data to be able to complete the packet
-      continue;
-    }
-    else if (ret == -1) {
-      // We are out of sync and there is a gap in the data.
-      // Exit
-      cout << "There is a gap in the data - we are out of sync" << endl;
-      break;
-    }
+    while ((ret = ogg_stream_packetout(&stream->mState, &packet)) != 0) {
+      if (ret == -1) {
+	// We are out of sync and there is a gap in the data.
+	cout << "There is a gap in the data - we are out of sync" << endl;
+	break;
+      }
 
-    // A packet is available, this is what we pass to the vorbis or
-    // theora libraries to decode.
-    handle_packet(stream, &packet);
+      // A packet is available, this is what we pass to the vorbis or
+      // theora libraries to decode.
+      handle_packet(stream, &packet);      
+    }
 
     // Check for SDL events to exit
     SDL_Event event;
@@ -174,7 +206,7 @@ void OggDecoder::play(istream& stream) {
       if (event.type == SDL_KEYDOWN &&
 	  event.key.keysym.sym == SDLK_SPACE)
 	SDL_WM_ToggleFullScreen(mSurface);
-    }
+    } 
   }
 
   // Cleanup
@@ -187,10 +219,17 @@ void OggDecoder::play(istream& stream) {
 void OggDecoder::handle_packet(OggStream* stream, ogg_packet* packet) {
   if (stream->mHeadersRead && stream->mType == TYPE_THEORA)
     handle_theora_data(stream, packet);
+
+  if (stream->mHeadersRead && stream->mType == TYPE_VORBIS)
+    handle_vorbis_data(stream, packet);
   
   if (!stream->mHeadersRead &&
       (stream->mType == TYPE_THEORA || stream->mType == TYPE_UNKNOWN))
     handle_theora_header(stream, packet);
+
+  if (!stream->mHeadersRead &&
+      (stream->mType == TYPE_VORBIS || stream->mType == TYPE_UNKNOWN))
+    handle_vorbis_header(stream, packet);
 }
 
 void OggDecoder::handle_theora_header(OggStream* stream, ogg_packet* packet) {
@@ -280,7 +319,80 @@ void OggDecoder::handle_theora_data(OggStream* stream, ogg_packet* packet) {
   float framerate = 
     float(stream->mTheora.mInfo.fps_numerator) / 
     float(stream->mTheora.mInfo.fps_denominator);
-  SDL_Delay((1.0/framerate)*1000);
+
+  // The delay is disabled if we've got audio. This is
+  // because we aren't doing any form of a/v sync yet and
+  // sleeping for a frame causes audio to underrun.
+  // This will be fixed when a/v sync is addressed.
+  if (!mAudio)
+    SDL_Delay((1.0/framerate)*1000);
+}
+
+void OggDecoder::handle_vorbis_header(OggStream* stream, ogg_packet* packet) {
+  int ret = vorbis_synthesis_headerin(&stream->mVorbis.mInfo,
+				      &stream->mVorbis.mComment,
+				      packet);
+  // Unlike libtheora, libvorbis does not provide a return value to
+  // indicate that we've finished loading the headers and got the
+  // first data packet. To detect this I check if I already know the
+  // stream type and if the vorbis_synthesis_headerin call failed.
+  if (stream->mType == TYPE_VORBIS && ret == OV_ENOTVORBIS) {
+    // First data packet
+    ret = vorbis_synthesis_init(&stream->mVorbis.mDsp, &stream->mVorbis.mInfo);
+    assert(ret == 0);
+    ret = vorbis_block_init(&stream->mVorbis.mDsp, &stream->mVorbis.mBlock);
+    assert(ret == 0);
+    stream->mHeadersRead = true;
+    handle_vorbis_data(stream, packet);
+  }
+  else if (ret == 0) {
+    stream->mType = TYPE_VORBIS;
+  }
+}
+
+void OggDecoder::handle_vorbis_data(OggStream* stream, ogg_packet* packet) {
+  int ret = 0;
+    
+  if (vorbis_synthesis(&stream->mVorbis.mBlock, packet) == 0) {
+    ret = vorbis_synthesis_blockin(&stream->mVorbis.mDsp, &stream->mVorbis.mBlock);
+    assert(ret == 0);
+  }
+
+  float** pcm = 0;
+  int samples = 0;
+  while ((samples = vorbis_synthesis_pcmout(&stream->mVorbis.mDsp, &pcm)) > 0) {
+    if (!mAudio) {
+      ret = sa_stream_create_pcm(&mAudio,
+				 NULL,
+				 SA_MODE_WRONLY,
+				 SA_PCM_FORMAT_S16_NE,
+				 stream->mVorbis.mInfo.rate,
+				 stream->mVorbis.mInfo.channels);
+      assert(ret == SA_SUCCESS);
+
+      ret = sa_stream_open(mAudio);
+      assert(ret == SA_SUCCESS);
+    }
+
+    if (mAudio) {
+      short buffer[samples * stream->mVorbis.mInfo.channels];
+      short* p = buffer;
+      for (int i=0;i < samples; ++i) {
+	for(int j=0; j < stream->mVorbis.mInfo.channels; ++j) {
+	  int v = static_cast<int>(floorf(0.5 + pcm[j][i]*32767.0));
+	  if (v > 32767) v = 32767;
+	  if (v <-32768) v = -32768;
+	  *p++ = v;
+	}
+      }
+
+      ret = sa_stream_write(mAudio, buffer, sizeof(buffer));
+      assert(ret == SA_SUCCESS);
+    }
+	
+    ret = vorbis_synthesis_read(&stream->mVorbis.mDsp, samples);
+    assert(ret == 0);
+  }
 }
 
 void usage() {
