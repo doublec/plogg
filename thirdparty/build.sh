@@ -8,9 +8,9 @@ make && make install || exit 1
 #cd ../libvorbis
 #./autogen.sh --prefix=$PREFIX/local --with-ogg=$PREFIX/local --disable-shared --enable-static || exit 1
 #make && make install || exit 1
-#cd ../libtheora
-#./autogen.sh --prefix=$PREFIX/local --with-ogg=$PREFIX/local --with-vorbis=$PREFIX/local --disable-shared --enable-static || exit 1
-#make && make install || exit 1
+cd ../libtheora
+./autogen.sh --prefix=$PREFIX/local --with-ogg=$PREFIX/local --with-vorbis=$PREFIX/local --disable-shared --enable-static || exit 1
+make && make install || exit 1
 #cd ../libsydneyaudio
 #./autogen.sh || exit 1
 #SOUND_BACKEND=--with-alsa

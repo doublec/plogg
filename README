@@ -29,6 +29,7 @@ You will need the following third party libraries to build:
 The following are also required but included as submodules:
 
   - libogg
+  - libtheora
 
 For a complete rebuild, including retrieval of this repository
 and submodules:
@@ -41,4 +42,5 @@ and submodules:
 
 Links to Ogg documentation:
 
-  libogg - http://www.xiph.org/ogg/doc/libogg/
+  libogg    - http://www.xiph.org/ogg/doc/libogg/
+  libtheora - http://theora.org/doc/libtheora-1.0/

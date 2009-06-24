@@ -1,3 +1,6 @@
 [submodule "thirdparty/libogg"]
 	path = thirdparty/libogg
 	url = git://bluishcoder.co.nz/git/libogg.git
+[submodule "thirdparty/libtheora"]
+	path = thirdparty/libtheora
+	url = git://bluishcoder.co.nz/git/libtheora.git
