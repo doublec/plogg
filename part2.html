@@ -1,0 +1,72 @@
+<p>My last post covered <a href="http://www.bluishcoder.co.nz/2009/06/reading-ogg-files-using-libogg.html">read Ogg files using libogg</a>. The resulting program didn't do much but it covered the basic steps needed to get an <a href="http://www.xiph.org/ogg/doc/libogg/ogg_packet.html">ogg_packet</a> which we need to decode the data in the stream. The thing step I want to cover is decoding Theora streams using <a href="http://theora.org/doc/libtheora-1.0/">libtheora</a>.</p><p>In the previous post I stored a count of the number of packets in the OggStream object. For theora decoding we need a number of different objects to be stored. I encapsulate this in a TheoraDecode structure:</p><pre>class TheoraDecode { 
+  ...
+  th_info mInfo;
+  th_comment mComment;
+  th_setup_info *mSetup;
+  th_dec_ctx* mCtx;
+  ...
+};</pre><p><a href="http://theora.org/doc/libtheora-1.0/structth__info.html">th_info</a>, <a href="http://theora.org/doc/libtheora-1.0/structth__comment.html">th_comment</a> and <a href="http://theora.org/doc/libtheora-1.0/theoradec_8h.html#b71cd2657455cc27d6c0127c66a89f28">th_setup_info</a> contain data read from the Theora headers. The Theora stream contains three headers packets. These are the info, comment and setup headers. There is one object for holding each of these as we read the headers. The <a href="http://theora.org/doc/libtheora-1.0/theoradec_8h.html#843d70bb02563885a8d54b9c1a781729">th_dec_ctx</a> object holds information that the decoder requires to keep track of the decoding process.</p>
+<p>th_info and th_comment need to be initialized using <a href="http://theora.org/doc/libtheora-1.0/group__basefuncs.html#g430d9c605816a6ca0bdce3a0b965b926">th_info_init</a> and <a href="http://theora.org/doc/libtheora-1.0/group__basefuncs.html#g6c8ab25988e7ea9d7b1e31a54cf58f09">th_comment_init</a>. Notice that th_setup_info is a pointer. This needs to be free'd when we're finished with it using <a href="http://theora.org/doc/libtheora-1.0/group__decfuncs.html#gdef55431b68aaa59d0d7b32b2f118f27">th_setup_free</a>. The decoder context object also needs to be free'd. Use <a href="http://theora.org/doc/libtheora-1.0/group__decfuncs.html#gfb6684ad8ba507b71112bc9de148e7d0">th_decode_free</a>. A convenient place to do this is in the TheoraDecode constructor and destructor:</p><pre>class TheoraDecode {
+  ...
+  TheoraDecode() :
+    mSetup(0),
+    mCtx(0)
+  {
+    th_info_init(&amp;mInfo);
+    th_comment_init(&amp;mComment);
+  }
+
+  ~TheoraDecode() {
+    th_setup_free(mSetup);
+    th_decode_free(mCtx);
+  }   
+  ...
+</pre><p>The TheoraDecode object is stored in the OggStream structure. The OggStream stucture also gets a field holding the type of the stream (Theora, Vorbis, Unknown, etc) and a boolean indicating whether the headers have been read:</p><pre>class OggStream
+{
+  ...
+  int mSerial;
+  ogg_stream_state mState;
+  StreamType mType;
+  bool mHeadersRead;
+  TheoraDecode mTheora;
+  ...
+};</pre><p>Once we get the ogg_packet from an Ogg stream we need to find out if it is a Theora stream. The approach I'm using to do this is to attempt to extract a Theora header from it. If this succeeds, it's a Theora stream. <a href="http://theora.org/doc/libtheora-1.0/group__decfuncs.html#g006d01d36fbe64768c571e6a12b7fc50">th_decode_headerin</a> will attempt to decode a header packet. A return value of '0' indicates that we got a Theora data packet (presumably the headers have been read already). This function gets passed the info, comment, and setup objects and it will populate them with data as it reads the headers:</p><pre>ogg_packet* packet = ...got this previously...;
+int ret = th_decode_headerin(&amp;stream->mTheora.mInfo,
+                             &amp;stream->mTheora.mComment,
+                             &amp;stream->mTheora.mSetup,
+                             packet);
+if (ret == OC_NOTFORMAT)
+  return; // Not a theora header
+
+if (ret > 0) {
+  // This is a theora header packet
+  stream->mType = TYPE_THEORA;
+  return;
+}
+
+assert(ret == 0);
+// This is not a header packet. It is the first 
+// video data packet.
+stream->mTheora.mCtx = 
+  th_decode_alloc(&amp;stream->mTheora.mInfo, 
+                  stream->mTheora.mSetup);
+assert(stream->mTheora.mCtx != NULL);
+stream->mHeadersRead = true;
+...decode data packet...</pre><p>In this example code we attempt to decode the header. If it fails it bails out, possibly to try decoding the packet using libvorbis or some other means. If it succeeds the stream is marked as type TYPE_THEORA so we can handle it specially later.</p><p>If all headers packets are read and we got the first data packet then we call <a href="http://theora.org/doc/libtheora-1.0/group__decfuncs.html#g0ef07a9a97849054aa606c595a2d807e">th_decode_alloc</a> to get a decode context to decode the data.</p><p>Once the headers are all read, the next step is to decode each Theora data packet. To do this we first call <a href="http://theora.org/doc/libtheora-1.0/group__decfuncs.html#g31c814bf09b2232aff69c57ae20f04eb">th_decode_packetin</a>. This adds the packet to the decoder. A return value of '0' means we can get a decoded frame as a result of adding the packet. A call to <a href="http://theora.org/doc/libtheora-1.0/group__decfuncs.html#ga9cc8af63fa8540e0fc95572f259cdcb">th_decode_ycbcr_out</a> gets the decoded YUV data, stored in a <a href="http://theora.org/doc/libtheora-1.0/codec_8h.html#343f7cfabad179cc4fe527cf06873f45">th_ycbcr_buffer</a> object. This is basically an array of the YUV data.</p><pre>ogg_int64_t granulepos = -1;
+int ret = th_decode_packetin(stream->mTheora.mCtx,
+                             packet,
+                             &amp;granulepos);
+assert(ret == 0);
+
+th_ycbcr_buffer buffer;
+ret = th_decode_ycbcr_out(stream->mTheora.mCtx, buffer);
+assert(ret == 0);
+...copy yuv data to SDL YUV overlay...
+...display overlay...
+...sleep for 1 frame...
+</pre><p>The 'granulepos' returned by the th_decode_packetin call holds information regarding the presentation time of this frame, and what frame contains the keyframe that is needed for this frame if it is not a keyframe. I'll write more about this in a future post when I cover synchronising the audio and video. For now it's going to be ignored.</p><p>Once we have the YUV data I use SDL to create a surface, and a YUV overlay. This allows SDL to do the YUV to RGB conversion for me. I won't copy the code for this since it's not particularly relevant to using the libtheora API - you can see it in the <a href="http://github.com/doublec/plogg/">github repository</a>.</p><p>Once the YUV data is blit to the screen the final step is to sleep for the period of one frame so the video can playback at approximately the right framerate. The framerate of the video is stored in the th_info object that we got from the headers. It is represented as the fraction of two numbers:</p><pre>float framerate = 
+  float(stream->mTheora.mInfo.fps_numerator) / 
+  float(stream->mTheora.mInfo.fps_denominator);
+SDL_Delay((1.0/framerate)*1000);
+</pre><p>With all that in place, running the program with an Ogg file containing a Theora stream should play the video at the right framerate. Adding Vorbis playback is almost as easy - the main difficulty is synchronising the audio and video. I'll cover these topics in a later post.</p>
+

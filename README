@@ -8,9 +8,10 @@ It is hosted on github at:
 
   http://github.com/doublec/plogg/tree
 
-For more information see this weblog post:
+For more information see this weblog posts:
 
   http://www.bluishcoder.co.nz/2009/06/reading-ogg-files-using-libogg.html
+  http://www.bluishcoder.co.nz/2009/06/decoding-theora-files-using-libtheora.html
 
 The following branches are (or will be) available in the 
 repository:
@@ -25,6 +26,7 @@ repository:
 You will need the following third party libraries to build:
 
   - boost
+  - SDL
 
 The following are also required but included as submodules:
 

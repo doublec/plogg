@@ -5,20 +5,53 @@
 #include <iostream>
 #include <fstream>
 #include <ogg/ogg.h>
+#include <theora/theora.h>
+#include <theora/theoradec.h>
+#include <SDL/SDL.h>
 
 using namespace std;
+
+enum StreamType {
+  TYPE_THEORA,
+  TYPE_UNKNOWN
+};
+
+class TheoraDecode {
+public:
+  th_info mInfo;
+  th_comment mComment;
+  th_setup_info *mSetup;
+  th_dec_ctx* mCtx;
+
+public:
+  TheoraDecode() :
+    mSetup(0),
+    mCtx(0)
+  {
+    th_info_init(&mInfo);
+    th_comment_init(&mComment);
+  }
+
+  ~TheoraDecode() {
+    th_setup_free(mSetup);
+    th_decode_free(mCtx);
+  }   
+};
 
 class OggStream
 {
 public:
   int mSerial;
   ogg_stream_state mState;
-  int mPacketCount;
+  StreamType mType;
+  bool mHeadersRead;
+  TheoraDecode mTheora;
 
 public:
   OggStream(int serial = -1) : 
     mSerial(serial),
-    mPacketCount(0)
+    mType(TYPE_UNKNOWN),
+    mHeadersRead(false)
   { 
   }
 
@@ -34,9 +67,26 @@ class OggDecoder
 {
 public:
   StreamMap mStreams;  
+  SDL_Surface* mSurface;
+  SDL_Overlay* mOverlay;
+
+private:
+  bool read_page(istream& stream, ogg_sync_state* state, ogg_page* page);
+  void handle_packet(OggStream* stream, ogg_packet* packet);
+  void handle_theora_data(OggStream* stream, ogg_packet* packet);
+  void handle_theora_header(OggStream* stream, ogg_packet* packet);
 
 public:
-  bool read_page(istream& stream, ogg_sync_state* state, ogg_page* page);
+  OggDecoder() :
+    mSurface(0),
+    mOverlay(0)
+  {
+  }
+
+  ~OggDecoder() {
+    if (mSurface)
+      SDL_FreeSurface(mSurface);
+  }
   void play(istream& stream);
 };
 
@@ -113,12 +163,124 @@ void OggDecoder::play(istream& stream) {
 
     // A packet is available, this is what we pass to the vorbis or
     // theora libraries to decode.
-    stream->mPacketCount++;
+    handle_packet(stream, &packet);
+
+    // Check for SDL events to exit
+    SDL_Event event;
+    if (SDL_PollEvent(&event) == 1) {
+      if (event.type == SDL_KEYDOWN &&
+	  event.key.keysym.sym == SDLK_ESCAPE)
+	break;
+      if (event.type == SDL_KEYDOWN &&
+	  event.key.keysym.sym == SDLK_SPACE)
+	SDL_WM_ToggleFullScreen(mSurface);
+    }
   }
 
   // Cleanup
   ret = ogg_sync_clear(&state);
   assert(ret == 0);
+
+  SDL_Quit();
+}
+
+void OggDecoder::handle_packet(OggStream* stream, ogg_packet* packet) {
+  if (stream->mHeadersRead && stream->mType == TYPE_THEORA)
+    handle_theora_data(stream, packet);
+  
+  if (!stream->mHeadersRead &&
+      (stream->mType == TYPE_THEORA || stream->mType == TYPE_UNKNOWN))
+    handle_theora_header(stream, packet);
+}
+
+void OggDecoder::handle_theora_header(OggStream* stream, ogg_packet* packet) {
+  int ret = th_decode_headerin(&stream->mTheora.mInfo,
+			       &stream->mTheora.mComment,
+			       &stream->mTheora.mSetup,
+			       packet);
+  if (ret == OC_NOTFORMAT)
+    return; // Not a theora header
+
+  if (ret > 0) {
+    // This is a theora header packet
+    stream->mType = TYPE_THEORA;
+    return;
+  }
+
+  assert(ret == 0);
+  // This is not a header packet. It is the first 
+  // video data packet.
+  stream->mTheora.mCtx = 
+    th_decode_alloc(&stream->mTheora.mInfo, 
+		    stream->mTheora.mSetup);
+  assert(stream->mTheora.mCtx != NULL);
+  stream->mHeadersRead = true;
+  handle_theora_data(stream, packet);
+}
+
+void OggDecoder::handle_theora_data(OggStream* stream, ogg_packet* packet) {
+  ogg_int64_t granulepos = -1;
+  int ret = th_decode_packetin(stream->mTheora.mCtx,
+			       packet,
+			       &granulepos);
+  assert(ret == 0);
+
+  // We have a frame. Get the YUV data
+  th_ycbcr_buffer buffer;
+  ret = th_decode_ycbcr_out(stream->mTheora.mCtx, buffer);
+  assert(ret == 0);
+
+  // Create an SDL surface to display if we haven't
+  // already got one.
+  if (!mSurface) {
+    int r = SDL_Init(SDL_INIT_VIDEO);
+    assert(r == 0);
+    mSurface = SDL_SetVideoMode(buffer[0].width, 
+				buffer[0].height,
+				32,
+				SDL_SWSURFACE);
+    assert(mSurface);
+  }
+   
+  // Create a YUV overlay to do the YUV to RGB conversion
+  if (!mOverlay) {
+    mOverlay = SDL_CreateYUVOverlay(buffer[0].width,
+				    buffer[0].height,
+				    SDL_YV12_OVERLAY,
+				    mSurface);
+    assert(mOverlay);
+  }
+
+  SDL_Rect rect;
+  rect.x = 0;
+  rect.y = 0;
+  rect.w = buffer[0].width;
+  rect.h = buffer[0].height;
+  
+  SDL_LockYUVOverlay(mOverlay);
+  for (int i=0; i < buffer[0].height; ++i)
+    memcpy(mOverlay->pixels[0]+(mOverlay->pitches[0]*i), 
+	   buffer[0].data+(buffer[0].stride*i), 
+	   mOverlay->pitches[0]);
+  
+  for (int i=0; i < buffer[2].height; ++i)
+    memcpy(mOverlay->pixels[2]+(mOverlay->pitches[2]*i), 
+	   buffer[1].data+(buffer[1].stride*i), 
+	   mOverlay->pitches[2]);
+	
+  for (int i=0; i < buffer[1].height; ++i)
+    memcpy(mOverlay->pixels[1]+(mOverlay->pitches[1]*i), 
+	   buffer[2].data+(buffer[2].stride*i), 
+	   mOverlay->pitches[1]);
+  
+  SDL_UnlockYUVOverlay(mOverlay);	  
+  SDL_DisplayYUVOverlay(mOverlay, &rect);
+
+  // Sleep for the time period of 1 frame
+  float framerate = 
+    float(stream->mTheora.mInfo.fps_numerator) / 
+    float(stream->mTheora.mInfo.fps_denominator);
+  SDL_Delay((1.0/framerate)*1000);
 }
 
 void usage() {
@@ -139,7 +301,6 @@ int main(int argc, const char* argv[]) {
 	it != decoder.mStreams.end();
 	++it) {
       OggStream* stream = (*it).second;
-      cout << stream->mSerial << " has " << stream->mPacketCount << " packets" << endl;
       delete stream;
     }
   }

@@ -21,7 +21,7 @@ plogg.o: plogg.cpp
 	g++ -g -c $(INCLUDE) -Ilocal/include -o plogg.o plogg.cpp
 
 plogg: plogg.o local/lib/libogg.a
-	g++ -g -o plogg plogg.o local/lib/libtheora.a local/lib/libogg.a $(LIBS)
+	g++ -g -o plogg plogg.o local/lib/libtheora.a local/lib/libogg.a -lSDL $(LIBS)
 
 clean: 
 	rm *.o plogg
