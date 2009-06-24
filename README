@@ -1,0 +1,44 @@
+plogg
+=====
+
+This is an example of using the libogg api to read and
+decode Ogg files.
+
+It is hosted on github at:
+
+  http://github.com/doublec/plogg/tree
+
+For more information see this weblog post:
+
+  http://bluishcoder.co.nz
+
+The following branches are (or will be) available in the 
+repository:
+
+  master       - Combined parts to make a usable player
+  part1_ogg    - Reads Ogg files but doesn't decode
+  part2_theora - Extends part 1 to decode and display theora
+  part3_vorbis - Extends part 1 to decode and play vorbis
+  part4_avsync - Combines part 2 and 3 to play videos 
+                 with synchronised audio and video.  
+
+You will need the following third party libraries to build:
+
+  - boost
+
+The following are also required but included as submodules:
+
+  - libogg
+
+For a complete rebuild, including retrieval of this repository
+and submodules:
+
+  $ git clone git://github.com/doublec/plogg.git
+  $ cd plogg
+  $ git submodule init
+  $ git submodule update
+  $ make
+
+Links to Ogg documentation:
+
+  libogg - http://www.xiph.org/ogg/doc/libogg/
