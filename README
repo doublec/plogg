@@ -14,8 +14,7 @@ For more information see this weblog posts:
   http://www.bluishcoder.co.nz/2009/06/decoding-theora-files-using-libtheora.html
   http://www.bluishcoder.co.nz/2009/06/decoding-vorbis-files-with-libvorbis.html
 
-The following branches are (or will be) available in the 
-repository:
+The following branches are available in the repository:
 
   master       - Combined parts to make a usable player
   part1_ogg    - Reads Ogg files but doesn't decode
