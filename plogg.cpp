@@ -262,58 +262,64 @@ void OggDecoder::handle_theora_data(OggStream* stream, ogg_packet* packet) {
   int ret = th_decode_packetin(stream->mTheora.mCtx,
 			       packet,
 			       &granulepos);
-  assert(ret == 0);
+  assert(ret == 0 || ret == TH_DUPFRAME);
 
-  // We have a frame. Get the YUV data
-  th_ycbcr_buffer buffer;
-  ret = th_decode_ycbcr_out(stream->mTheora.mCtx, buffer);
-  assert(ret == 0);
+  // If the return code is TH_DUPFRAME then we don't need to
+  // get the YUV data and display it since it's the same as
+  // the previous frame.
 
-  // Create an SDL surface to display if we haven't
-  // already got one.
-  if (!mSurface) {
-    int r = SDL_Init(SDL_INIT_VIDEO);
-    assert(r == 0);
-    mSurface = SDL_SetVideoMode(buffer[0].width, 
-				buffer[0].height,
-				32,
-				SDL_SWSURFACE);
-    assert(mSurface);
-  }
+  if (ret == 0) {
+    // We have a frame. Get the YUV data
+    th_ycbcr_buffer buffer;
+    ret = th_decode_ycbcr_out(stream->mTheora.mCtx, buffer);
+    assert(ret == 0);
+
+    // Create an SDL surface to display if we haven't
+    // already got one.
+    if (!mSurface) {
+      int r = SDL_Init(SDL_INIT_VIDEO);
+      assert(r == 0);
+      mSurface = SDL_SetVideoMode(buffer[0].width, 
+				  buffer[0].height,
+				  32,
+				  SDL_SWSURFACE);
+      assert(mSurface);
+    }
    
-  // Create a YUV overlay to do the YUV to RGB conversion
-  if (!mOverlay) {
-    mOverlay = SDL_CreateYUVOverlay(buffer[0].width,
-				    buffer[0].height,
-				    SDL_YV12_OVERLAY,
-				    mSurface);
-    assert(mOverlay);
-  }
+    // Create a YUV overlay to do the YUV to RGB conversion
+    if (!mOverlay) {
+      mOverlay = SDL_CreateYUVOverlay(buffer[0].width,
+				      buffer[0].height,
+				      SDL_YV12_OVERLAY,
+				      mSurface);
+      assert(mOverlay);
+    }
 
-  SDL_Rect rect;
-  rect.x = 0;
-  rect.y = 0;
-  rect.w = buffer[0].width;
-  rect.h = buffer[0].height;
-  
-  SDL_LockYUVOverlay(mOverlay);
-  for (int i=0; i < buffer[0].height; ++i)
-    memcpy(mOverlay->pixels[0]+(mOverlay->pitches[0]*i), 
-	   buffer[0].data+(buffer[0].stride*i), 
-	   mOverlay->pitches[0]);
-  
-  for (int i=0; i < buffer[2].height; ++i)
-    memcpy(mOverlay->pixels[2]+(mOverlay->pitches[2]*i), 
-	   buffer[1].data+(buffer[1].stride*i), 
-	   mOverlay->pitches[2]);
-	
-  for (int i=0; i < buffer[1].height; ++i)
-    memcpy(mOverlay->pixels[1]+(mOverlay->pitches[1]*i), 
-	   buffer[2].data+(buffer[2].stride*i), 
-	   mOverlay->pitches[1]);
-  
-  SDL_UnlockYUVOverlay(mOverlay);	  
-  SDL_DisplayYUVOverlay(mOverlay, &rect);
+    SDL_Rect rect;
+    rect.x = 0;
+    rect.y = 0;
+    rect.w = buffer[0].width;
+    rect.h = buffer[0].height;
+    
+    SDL_LockYUVOverlay(mOverlay);
+    for (int i=0; i < buffer[0].height; ++i)
+      memcpy(mOverlay->pixels[0]+(mOverlay->pitches[0]*i), 
+	     buffer[0].data+(buffer[0].stride*i), 
+	     mOverlay->pitches[0]);
+    
+    for (int i=0; i < buffer[2].height; ++i)
+      memcpy(mOverlay->pixels[2]+(mOverlay->pitches[2]*i), 
+	     buffer[1].data+(buffer[1].stride*i), 
+	     mOverlay->pitches[2]);
+    
+    for (int i=0; i < buffer[1].height; ++i)
+      memcpy(mOverlay->pixels[1]+(mOverlay->pitches[1]*i), 
+	     buffer[2].data+(buffer[2].stride*i), 
+	     mOverlay->pitches[1]);
+    
+    SDL_UnlockYUVOverlay(mOverlay);	  
+    SDL_DisplayYUVOverlay(mOverlay, &rect);
+  }
 
   // Sleep for the time period of 1 frame
   float framerate = 
