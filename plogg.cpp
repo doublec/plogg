@@ -111,12 +111,12 @@ public:
   }
 
   ~OggDecoder() {
-    if (mSurface)
-      SDL_FreeSurface(mSurface);
     if (mAudio) {
       sa_stream_drain(mAudio);
-      //      sa_stream_destroy(mAudio);
+      sa_stream_destroy(mAudio);
     }
+    if (mSurface)
+      SDL_FreeSurface(mSurface);
   }
   void play(istream& stream);
 };
@@ -222,7 +222,7 @@ void OggDecoder::handle_packet(OggStream* stream, ogg_packet* packet) {
 
   if (stream->mHeadersRead && stream->mType == TYPE_VORBIS)
     handle_vorbis_data(stream, packet);
-  
+
   if (!stream->mHeadersRead &&
       (stream->mType == TYPE_THEORA || stream->mType == TYPE_UNKNOWN))
     handle_theora_header(stream, packet);
