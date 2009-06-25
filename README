@@ -1,11 +1,6 @@
 plogg
 =====
 
-***
-NOTE: This branch is currently a work in progress. I haven't completed
-it or written a blog post about it yet.
-***
-
 This is an example of using the libogg api to read and
 decode Ogg files.
 
@@ -17,6 +12,7 @@ For more information see this weblog posts:
 
   http://www.bluishcoder.co.nz/2009/06/reading-ogg-files-using-libogg.html
   http://www.bluishcoder.co.nz/2009/06/decoding-theora-files-using-libtheora.html
+  http://www.bluishcoder.co.nz/2009/06/decoding-vorbis-files-using-libvorbis.html
 
 The following branches are (or will be) available in the 
 repository:

@@ -1,0 +1,71 @@
+<p>Decoding Vorbis streams require a very similar approach to that used when <a href="http://www.bluishcoder.co.nz/2009/06/decoding-theora-files-using-libtheora.html">decoding Theora streams</a>. The public interface to the libvorbis library is very similar to that used by libtheora. Unfortunately the <a href="http://www.xiph.org/vorbis/doc/">libvorbis documentation</a> doesn't contain an API reference that I could find so I'm following the approached used by the example programs.</p><p>Assuming we have already obtained an <a href="http://www.xiph.org/ogg/doc/libogg/ogg_packet.html">ogg_packet</a>, the general steps to follow to decode and play Vorbis streams are:</p><ol><li>Call vorbis_synthesis_headerin to see if the packet is a Vorbis header packet. This is passed a vorbis_info and vorbis_comment object to hold the information read from those header packets. The return value of this function is zero if the packet is a Vorbis header packet. Unfortunately it doesn't return a value to see that it's a Vorbis data packet. To check for this you need to check if the stream is a Vorbis stream (by knowing you've previously read Vorbis headers from it) and the return value is OV_ENOTVORBIS.</li><li>Once all the header packets are read create a vorbis_dsp_state and vorbis_block object. Initialize these with vorbis_synthesis_init and vorbis_block_init respectively. These objects hold the state of the Vorbis decoding. vorbis_synthesis_init is passed the vorbis_info object that was filled in during the reading of the header packets.</li><li>For each data packet:<ol><li>Call vorbis_synthesis passing it the vorbis_block created above and the ogg_packet containing the packet data. If this succeeds (by returning zero), call vorbis_synthesis_blockin passing it the vorbis_dsp_state and vorbis_block objects. This call copies the data from the packet into the Vorbis objects ready for decoding.</li><li>Call vorbis_synthesis_pcmout to get an pointer to an array of floating point values for the sound samples. This will return the number of samples in the array. The array is indexed by channel number, followed by sample number. Once obtained this sound data can be sent to the sound hardware to play the audio.</li><li>Call vorbis_synthesis_read, passing it the vorbis_dsp_state object and the number of sound samples consumed. This allows you to consume less data than vorbis_synthesis_pcmout returned. This is useful if you can't write all the data to the sound hardware without blocking.</li></ol></li></ol><p>In the example code in the <a href="http://github.com/doublec/plogg/tree/master">github repository</a> I create a VorbisDecode object that holds the objects needed for decoding. This is similar to the TheoraDecode object mentioned in my <a href="http://www.bluishcoder.co.nz/2009/06/decoding-theora-files-using-libtheora.html">Theora post</a>:</p><pre>class VorbisDecode {
+  ...
+  vorbis_info mInfo;
+  vorbis_comment mComment;
+  vorbis_dsp_state mDsp;
+  vorbis_block mBlock;
+  ...
+
+  VorbisDecode()
+  {
+    vorbis_info_init(&amp;mInfo);
+    vorbis_comment_init(&amp;mComment);    
+  }
+};</pre>    <p>I added a TYPE_VORBIS value to the StreamType enum and the stream is set to this type when a Vorbis header is successfully decoded:</p><pre>  int ret = vorbis_synthesis_headerin(&amp;stream->mVorbis.mInfo,
+				      &amp;stream->mVorbis.mComment,
+				      packet);
+  if (stream->mType == TYPE_VORBIS &amp;&amp; ret == OV_ENOTVORBIS) {
+    // First data packet
+    ret = vorbis_synthesis_init(&amp;stream->mVorbis.mDsp, &amp;stream->mVorbis.mInfo);
+    assert(ret == 0);
+    ret = vorbis_block_init(&amp;stream->mVorbis.mDsp, &amp;stream->mVorbis.mBlock);
+    assert(ret == 0);
+    stream->mHeadersRead = true;
+    handle_vorbis_data(stream, packet);
+  }
+  else if (ret == 0) {
+    stream->mType = TYPE_VORBIS;
+  }
+}</pre><p>The example program uses libsydneyaudio for audio output. This requires sound samples to be written as signed short values. When I get the floating point data from Vorbis I convert this to signed short and send it to libsydneyaudio:</p><pre>  int ret = 0;
+    
+  if (vorbis_synthesis(&amp;stream->mVorbis.mBlock, packet) == 0) {
+    ret = vorbis_synthesis_blockin(&amp;stream->mVorbis.mDsp, &amp;stream->mVorbis.mBlock);
+    assert(ret == 0);
+  }
+
+  float** pcm = 0;
+  int samples = 0;
+  while ((samples = vorbis_synthesis_pcmout(&amp;stream->mVorbis.mDsp, &amp;pcm)) > 0) {
+    if (!mAudio) {
+      ret = sa_stream_create_pcm(&amp;mAudio,
+				 NULL,
+				 SA_MODE_WRONLY,
+				 SA_PCM_FORMAT_S16_NE,
+				 stream->mVorbis.mInfo.rate,
+				 stream->mVorbis.mInfo.channels);
+      assert(ret == SA_SUCCESS);
+
+      ret = sa_stream_open(mAudio);
+      assert(ret == SA_SUCCESS);
+    }
+
+    if (mAudio) {
+      short buffer[samples * stream->mVorbis.mInfo.channels];
+      short* p = buffer;
+      for (int i=0;i &lt; samples; ++i) {
+	for(int j=0; j &lt; stream->mVorbis.mInfo.channels; ++j) {
+	  int v = static_cast&lt;int&lt;(floorf(0.5 + pcm[j][i]*32767.0));
+	  if (v > 32767) v = 32767;
+	  if (v &lt;-32768) v = -32768;
+	  *p++ = v;
+	}
+      }
+
+      ret = sa_stream_write(mAudio, buffer, sizeof(buffer));
+      assert(ret == SA_SUCCESS);
+    }
+	
+    ret = vorbis_synthesis_read(&amp;stream->mVorbis.mDsp, samples);
+    assert(ret == 0);
+  }
+}</pre><p>A couple of minor changes were also made to the example program:</p><ul><li>Continue processing pages and packets when the 'end of file' is reached. Otherwise a few packets that are buffered after we've reached the end of the file will be missed.</li><li>After reading a page don't just try to read one packet, call <a href="http://www.xiph.org/ogg/doc/libogg/ogg_stream_packetout.html">ogg_stream_packetout</a> until it returns a result saying there are no more packets. This means we process all the packets from the page immediately and prevents a build up of buffered data.</li></ul><p>The code for this example is in the 'part3_vorbis' branch of the github repository. This also includes the Theora code but does not do any a/v synchronisation.  Files containing Theora streams will show the video data but it will not play smoothly and will not be synchronised with the audio. Fixing that is the topic of the next post in this series.</p>
