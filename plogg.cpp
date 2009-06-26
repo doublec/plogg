@@ -233,7 +233,7 @@ void OggDecoder::handle_theora_header(OggStream* stream, ogg_packet* packet) {
 			       &stream->mTheora.mComment,
 			       &stream->mTheora.mSetup,
 			       packet);
-  if (ret == OC_NOTFORMAT)
+  if (ret == TH_ENOTFORMAT)
     return; // Not a theora header
 
   if (ret > 0) {
@@ -242,7 +242,9 @@ void OggDecoder::handle_theora_header(OggStream* stream, ogg_packet* packet) {
     return;
   }
 
+  // Any other return value is treated as a fatal error
   assert(ret == 0);
+
   // This is not a header packet. It is the first 
   // video data packet.
   stream->mTheora.mCtx = 
