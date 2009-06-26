@@ -35,7 +35,7 @@ int ret = th_decode_headerin(&amp;stream->mTheora.mInfo,
                              &amp;stream->mTheora.mComment,
                              &amp;stream->mTheora.mSetup,
                              packet);
-if (ret == OC_NOTFORMAT)
+if (ret == TH_ENOTFORMAT)
   return; // Not a theora header
 
 if (ret > 0) {
