@@ -99,14 +99,10 @@ void OggDecoder::play(istream& stream) {
       
     // Return a complete packet of data from the stream
     ogg_packet packet;
-    ret = ogg_stream_packetout(&stream->mState, &packet);	
+    ret = ogg_stream_packetout(&stream->mState, &packet);
+    assert(ret == 0 || ret == 1);
     if (ret == 0) {
       // Need more data to be able to complete the packet
-      continue;
-    }
-    else if (ret == -1) {
-      // We are out of sync and there is a gap in the data.
-      cout << "There is a gap in the data - we are out of sync" << endl;
       continue;
     }
 
