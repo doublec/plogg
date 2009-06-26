@@ -106,9 +106,8 @@ void OggDecoder::play(istream& stream) {
     }
     else if (ret == -1) {
       // We are out of sync and there is a gap in the data.
-      // Exit
       cout << "There is a gap in the data - we are out of sync" << endl;
-      break;
+      continue;
     }
 
     // A packet is available, this is what we pass to the vorbis or
