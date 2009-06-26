@@ -101,7 +101,6 @@ void TheoraDecode::initForData(OggStream* stream) {
 			  &ppmax,
 			  sizeof(ppmax));
   assert(ret == 0);
-  cout << "ppmax = " << ppmax << endl;
   ppmax = 0;
   ret = th_decode_ctl(stream->mTheora.mCtx,
 		      TH_DECCTL_SET_PPLEVEL,
@@ -129,14 +128,13 @@ public:
   ogg_int64_t  mFrameGranulepos;
   
 private:
+  bool handle_theora_header(OggStream* stream, ogg_packet* packet);
+  bool handle_vorbis_header(OggStream* stream, ogg_packet* packet);
   void read_headers(istream& stream, ogg_sync_state* state);
+
   bool read_page(istream& stream, ogg_sync_state* state, ogg_page* page);
   bool read_packet(istream& is, ogg_sync_state* state, OggStream* stream, ogg_packet* packet);
-  void handle_packet(ogg_sync_state* state, istream& is, OggStream* audio, OggStream* video, ogg_packet* packet);
   void handle_theora_data(OggStream* stream, ogg_packet* packet);
-  bool handle_theora_header(OggStream* stream, ogg_packet* packet);
-  void handle_vorbis_data(OggStream* stream, ogg_packet* packet);
-  bool handle_vorbis_header(OggStream* stream, ogg_packet* packet);
 
 public:
   OggDecoder() :
@@ -294,6 +292,17 @@ void OggDecoder::play(istream& is) {
 	 << audio->mVorbis.mInfo.channels << " channels "
 	 << audio->mVorbis.mInfo.rate << "KHz"
 	 << endl;
+
+    ret = sa_stream_create_pcm(&mAudio,
+			       NULL,
+			       SA_MODE_WRONLY,
+			       SA_PCM_FORMAT_S16_NE,
+			       audio->mVorbis.mInfo.rate,
+			       audio->mVorbis.mInfo.channels);
+    assert(ret == SA_SUCCESS);
+	
+    ret = sa_stream_open(mAudio);
+    assert(ret == SA_SUCCESS);
   }
 
   // Read audio packets, sending audio data to the sound hardware.
@@ -308,19 +317,6 @@ void OggDecoder::play(istream& is) {
     float** pcm = 0;
     int samples = 0;
     while ((samples = vorbis_synthesis_pcmout(&audio->mVorbis.mDsp, &pcm)) > 0) {
-      if (!mAudio) {
-	ret = sa_stream_create_pcm(&mAudio,
-				   NULL,
-				   SA_MODE_WRONLY,
-				   SA_PCM_FORMAT_S16_NE,
-				   audio->mVorbis.mInfo.rate,
-				   audio->mVorbis.mInfo.channels);
-	assert(ret == SA_SUCCESS);
-	
-	ret = sa_stream_open(mAudio);
-	assert(ret == SA_SUCCESS);
-      }
-
       if (mAudio) {
 #if 0
 	// Get the number of samples we can write without blocking
@@ -333,11 +329,7 @@ void OggDecoder::play(istream& is) {
 	  sizeof(short) / 
 	  audio->mVorbis.mInfo.channels;
 #else
-	float framerate = video ? 1.0/(float(video->mTheora.mInfo.fps_numerator) / 
-				       float(video->mTheora.mInfo.fps_denominator)) : 0.0;
-
-	int available_samples = 
-	  video ? int(framerate * audio->mVorbis.mInfo.rate)/2 : samples;
+	int available_samples = samples;
 #endif
 	samples = available_samples < samples ? available_samples : samples;
 	if (samples > 0) {
@@ -384,6 +376,7 @@ void OggDecoder::play(istream& is) {
 	  float(audio->mVorbis.mInfo.rate) /
 	  float(audio->mVorbis.mInfo.channels) /
 	  sizeof(short);
+
 	float video_time = th_granule_time(video->mTheora.mCtx, mFrameGranulepos);
 	if (audio_time > video_time) {
 	  // Decode one frame and display it. If no frame is available we
@@ -392,9 +385,6 @@ void OggDecoder::play(istream& is) {
 	  if (read_packet(is, &state, video, &packet)) {
 	    handle_theora_data(video, &packet);
 	    video_time = th_granule_time(video->mTheora.mCtx, mFrameGranulepos);
-	  }
-	  else {
-	    cout << "no video packet" << endl;
 	  }
 	}
       }
@@ -525,105 +515,6 @@ bool OggDecoder::handle_vorbis_header(OggStream* stream, ogg_packet* packet) {
     stream->mType = TYPE_VORBIS;
   }
   return false;
-}
-
-void OggDecoder::handle_packet(ogg_sync_state* state, istream& is, OggStream* audio, OggStream* video, ogg_packet* packet) {
-  int ret = 0;
-    
-  if (vorbis_synthesis(&audio->mVorbis.mBlock, packet) == 0) {
-    ret = vorbis_synthesis_blockin(&audio->mVorbis.mDsp, &audio->mVorbis.mBlock);
-    assert(ret == 0);
-  }
-
-  float** pcm = 0;
-  int samples = 0;
-  while ((samples = vorbis_synthesis_pcmout(&audio->mVorbis.mDsp, &pcm)) > 0) {
-    if (!mAudio) {
-      ret = sa_stream_create_pcm(&mAudio,
-				 NULL,
-				 SA_MODE_WRONLY,
-				 SA_PCM_FORMAT_S16_NE,
-				 audio->mVorbis.mInfo.rate,
-				 audio->mVorbis.mInfo.channels);
-      assert(ret == SA_SUCCESS);
-
-      ret = sa_stream_open(mAudio);
-      assert(ret == SA_SUCCESS);
-    }
-
-    if (mAudio) {
-#if 0
-      // Get the number of samples we can write without blocking
-      size_t available_bytes = 0;
-      ret = sa_stream_get_write_size(mAudio, &available_bytes);
-      assert(ret == SA_SUCCESS);
-      
-      int available_samples = 
-	available_bytes / 
-	sizeof(short) / 
-	audio->mVorbis.mInfo.channels;
-#endif
-      float framerate = 1.0/(float(video->mTheora.mInfo.fps_numerator) / 
-			     float(video->mTheora.mInfo.fps_denominator));
-
-      int available_samples = 
-	video ? int(framerate * audio->mVorbis.mInfo.rate)/2 : samples;
-      samples = available_samples < samples ? available_samples : samples;
-      short buffer[samples * audio->mVorbis.mInfo.channels];
-      short* p = buffer;
-      for (int i=0;i < samples; ++i) {
-	for(int j=0; j < audio->mVorbis.mInfo.channels; ++j) {
-	  int v = static_cast<int>(floorf(0.5 + pcm[j][i]*32767.0));
-	  if (v > 32767) v = 32767;
-	  if (v <-32768) v = -32768;
-	  *p++ = v;
-	}
-      }
-
-      ret = sa_stream_write(mAudio, buffer, sizeof(buffer));
-      assert(ret == SA_SUCCESS);
-    }
-	
-    ret = vorbis_synthesis_read(&audio->mVorbis.mDsp, samples);
-    assert(ret == 0);
-
-    // At this point we've written some audio data to the sound
-    // system. Now we check to see if it's time to display a video
-    // frame.
-    //
-    // The granule position of a video frame represents the time
-    // that that frame should be displayed up to. So we get the
-    // current time, compare it to the last granule position read.
-    // If the time is greater than that it's time to display a new
-    // video frame.
-    //
-    // The time is obtained from the audio system - this represents
-    // the time of the audio data that the user is currently
-    // listening to. In this way the video frame should be synced up
-    // to the audio the user is hearing.
-    //
-    if (video) {
-      ogg_int64_t position = 0;
-      int ret = sa_stream_get_position(mAudio, SA_POSITION_WRITE_SOFTWARE, &position);
-      assert(ret == SA_SUCCESS);
-      float audio_time = 
-	float(position) /
-	float(audio->mVorbis.mInfo.rate) /
-	float(audio->mVorbis.mInfo.channels);
-      float video_time = th_granule_time(video->mTheora.mCtx, mFrameGranulepos);
-      if (audio_time > video_time) {
-	// Decode one frame and display it. If no frame is available we
-	// don't do anything.
-	ogg_packet packet;
-	ogg_page page;
-	ret = ogg_stream_packetout(&video->mState, &packet);	
-	if (ret == 1) {
-	  handle_theora_data(video, &packet);
-	}
-      }
-    }
-    
-  }
 }
 
 void usage() {
