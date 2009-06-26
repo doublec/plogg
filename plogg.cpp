@@ -186,11 +186,7 @@ void OggDecoder::play(istream& stream) {
     // pages if possible.
     ogg_packet packet;
     while ((ret = ogg_stream_packetout(&stream->mState, &packet)) != 0) {
-      if (ret == -1) {
-	// We are out of sync and there is a gap in the data.
-	cout << "There is a gap in the data - we are out of sync" << endl;
-	break;
-      }
+      assert(ret == 1);
 
       // A packet is available, this is what we pass to the vorbis or
       // theora libraries to decode.
