@@ -72,7 +72,7 @@ public:
   int mSerial;
   ogg_stream_state mState;
   StreamType mType;
-  bool mHeadersRead;
+  bool mActive;
   TheoraDecode mTheora;
   VorbisDecode mVorbis;
 
@@ -80,7 +80,7 @@ public:
   OggStream(int serial = -1) : 
     mSerial(serial),
     mType(TYPE_UNKNOWN),
-    mHeadersRead(false)
+    mActive(true)
   { 
   }
 
@@ -101,6 +101,9 @@ void TheoraDecode::initForData(OggStream* stream) {
 			  &ppmax,
 			  sizeof(ppmax));
   assert(ret == 0);
+
+  // Set to a value between 0 and ppmax inclusive to experiment with
+  // this parameter.
   ppmax = 0;
   ret = th_decode_ctl(stream->mTheora.mCtx,
 		      TH_DECCTL_SET_PPLEVEL,
@@ -125,7 +128,7 @@ public:
   SDL_Surface* mSurface;
   SDL_Overlay* mOverlay;
   sa_stream_t* mAudio;
-  ogg_int64_t  mFrameGranulepos;
+  ogg_int64_t  mGranulepos;
   
 private:
   bool handle_theora_header(OggStream* stream, ogg_packet* packet);
@@ -141,7 +144,7 @@ public:
     mSurface(0),
     mOverlay(0),
     mAudio(0),
-    mFrameGranulepos(0)
+    mGranulepos(0)
   {
   }
 
@@ -199,8 +202,11 @@ bool OggDecoder::read_packet(istream& is, ogg_sync_state* state, OggStream* stre
     assert(mStreams.find(serial) != mStreams.end());
     OggStream* pageStream = mStreams[serial];
     
-    ret = ogg_stream_pagein(&pageStream->mState, &page);
-    assert(ret == 0);      
+    // Drop data for streams we're not interested in.
+    if (stream->mActive) {
+      ret = ogg_stream_pagein(&pageStream->mState, &page);
+      assert(ret == 0);
+    }
   }
   return true;
 }
@@ -273,11 +279,12 @@ void OggDecoder::play(istream& is) {
       video = stream;
       video->mTheora.initForData(video);
     }
-
-    if (!audio && stream->mType == TYPE_VORBIS) {
+    else if (!audio && stream->mType == TYPE_VORBIS) {
       audio = stream;
       audio->mVorbis.initForData(audio);
     }
+    else
+      stream->mActive = false;
   }
 
   if (video) {
@@ -318,20 +325,6 @@ void OggDecoder::play(istream& is) {
     int samples = 0;
     while ((samples = vorbis_synthesis_pcmout(&audio->mVorbis.mDsp, &pcm)) > 0) {
       if (mAudio) {
-#if 0
-	// Get the number of samples we can write without blocking
-	size_t available_bytes = 0;
-	ret = sa_stream_get_write_size(mAudio, &available_bytes);
-	assert(ret == SA_SUCCESS);
-	
-	int available_samples = 
-	  available_bytes / 
-	  sizeof(short) / 
-	  audio->mVorbis.mInfo.channels;
-#else
-	int available_samples = samples;
-#endif
-	samples = available_samples < samples ? available_samples : samples;
 	if (samples > 0) {
 	  short buffer[samples * audio->mVorbis.mInfo.channels];
 	  short* p = buffer;
@@ -377,14 +370,14 @@ void OggDecoder::play(istream& is) {
 	  float(audio->mVorbis.mInfo.channels) /
 	  sizeof(short);
 
-	float video_time = th_granule_time(video->mTheora.mCtx, mFrameGranulepos);
+	float video_time = th_granule_time(video->mTheora.mCtx, mGranulepos);
 	if (audio_time > video_time) {
 	  // Decode one frame and display it. If no frame is available we
 	  // don't do anything.
 	  ogg_packet packet;
 	  if (read_packet(is, &state, video, &packet)) {
 	    handle_theora_data(video, &packet);
-	    video_time = th_granule_time(video->mTheora.mCtx, mFrameGranulepos);
+	    video_time = th_granule_time(video->mTheora.mCtx, mGranulepos);
 	  }
 	}
       }
@@ -438,7 +431,7 @@ void OggDecoder::handle_theora_data(OggStream* stream, ogg_packet* packet) {
   // time when to display the next frame.
   int ret = th_decode_packetin(stream->mTheora.mCtx,
 			       packet,
-			       &mFrameGranulepos);
+			       &mGranulepos);
   assert(ret == 0 || ret == TH_DUPFRAME);
 
   // If the return code is TH_DUPFRAME then we don't need to
