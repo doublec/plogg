@@ -287,30 +287,31 @@ void OggDecoder::play(istream& is) {
       stream->mActive = false;
   }
 
+  assert(audio);
+
   if (video) {
     cout << "Video stream is " 
 	 << video->mSerial << " "
 	 << video->mTheora.mInfo.frame_width << "x" << video->mTheora.mInfo.frame_height
 	 << endl;
   }
-  if (audio) {
-    cout << "Audio stream is " 
-	 << audio->mSerial << " "
-	 << audio->mVorbis.mInfo.channels << " channels "
-	 << audio->mVorbis.mInfo.rate << "KHz"
-	 << endl;
 
-    ret = sa_stream_create_pcm(&mAudio,
-			       NULL,
-			       SA_MODE_WRONLY,
-			       SA_PCM_FORMAT_S16_NE,
-			       audio->mVorbis.mInfo.rate,
-			       audio->mVorbis.mInfo.channels);
-    assert(ret == SA_SUCCESS);
+  cout << "Audio stream is " 
+       << audio->mSerial << " "
+       << audio->mVorbis.mInfo.channels << " channels "
+       << audio->mVorbis.mInfo.rate << "KHz"
+       << endl;
+
+  ret = sa_stream_create_pcm(&mAudio,
+			     NULL,
+			     SA_MODE_WRONLY,
+			     SA_PCM_FORMAT_S16_NE,
+			     audio->mVorbis.mInfo.rate,
+			     audio->mVorbis.mInfo.channels);
+  assert(ret == SA_SUCCESS);
 	
-    ret = sa_stream_open(mAudio);
-    assert(ret == SA_SUCCESS);
-  }
+  ret = sa_stream_open(mAudio);
+  assert(ret == SA_SUCCESS);
 
   // Read audio packets, sending audio data to the sound hardware.
   // When it's time to display a frame, decode the frame and display it.
