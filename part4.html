@@ -1,0 +1,114 @@
+<p><a href="http://www.bluishcoder.co.nz/2009/06/decoding-vorbis-files-with-libvorbis.html">My last post in this series</a> had Vorbis audio playing but with Theora video out of sync. This post will go through an approach to keeping the video in sync with the audio.</p>
+<p>To get video in sync with the audio we need a timer incrementing from when we start playback. We can't use the system clock for this as it is not necessarily keeping the same time as the audio or video being played. The system clock can drift slightly and over time this audio and video to get out of sync.</p> 
+<p>The audio library I'm using, libsydneyaudio, has an API call that allows getting the playback position of the sound sample being played by the audio system. This is a value in bytes. Since we know the sample rate and number of channels of the audio stream we can compute a time value from this. Synchronisation becomes a matter of continuously feeding the audio to libsydneybackend, querying the current position, converting it to a time value, and displaying the frame for that time.</p>
+<p>The time for a particular frame is returned by the call to <a href="http://theora.org/doc/libtheora-1.0/group__decfuncs.html#g31c814bf09b2232aff69c57ae20f04eb">th_decode_packetin</a>. The last parameter is a pointer to hold the 'granulepos' of the decoded frame. The Theora spec explains that the granulepos can be used to compute the time that this frame should be displayed up to. That is, when this time is exceeded this frame should no longer be displayed. It also enables computing the location of the keyframe that this frame depends on - I'll cover what this means when I write about how to do seeking.</p>
+<p>The libtheora API <a href="http://theora.org/doc/libtheora-1.0/group__basefuncs.html#g707e1e281de788af0df39ef00f3fb432">th_granule_time</a> converts a 'granulepos' to an absolute time in seconds. So decoding a frame gives us 'granulepos'. We store this so we know when to stop displaying the frame. We track the audio position, convert it to a time. If it exceeds this value we decode the next frame and display that. Here's a breakdown of the steps:</p>
+<ol>
+  <li>Read the headers from the Ogg file. Stop when we hit the first data packet.</li>
+  <li>Read packets from the audio stream in the Ogg file. For each audio packet:
+    <ol>
+      <li>Decode the audio data and write it to the audio hardware.</li>
+      <li>Get the current playback position of the audio and convert it to an absolute time value.</li>
+      <li>Convert the last granulepos read (defaulting to zero if none have been read) to an absolute time value using the libtheora API.</li>
+      <li>If the audio time is greater than the video time:
+	<ol>
+	  <li>Read a packet from the Theora stream.</li>
+	  <li>Decode that packet and display it</li>
+	  <li>Store the granulepos from that decoded frame so we know when to display the next frame.</li>
+	</ol>
+      </li>
+    </ol>
+  </li>
+</ol>
+<p>Notice that the structure of the program is different to the last few articles. We no longer read all packets from the stream, processing them as we get them. Instead we specifically process the audio packets and only handle the video when it's time to display them. Since we are driving our a/v sync off the audio clock we must continously feed the audio data. I think it tends to be a better user experience to have flawless audio with video frame skipping rather than skipping audio but smooth video. Worse is to have both skipping of course.</p>
+<p>The example code for this article is in the '<a href="http://github.com/doublec/plogg/tree/part4_avsync">part4_avsync</a>' branch on github.</p>
+<p>This example takes a slightly different approach to reading headers. I use <a href="http://www.xiph.org/ogg/doc/libogg/ogg_stream_packetpeek.html">ogg_stream_packetpeek</a> to peek ahead in the bitstream for a packet and do the header processing on the peeked packet. If it is a header I then consume the packet. This is done so I don't consume the first data packet when reading the headers. I want the data packets to be consumed in a particular order (audio, followed by video when needed).</p>
+<pre>// Process all available header packets in the stream. When we hit
+// the first data stream we don't decode it, instead we
+// return. The caller can then choose to process whatever data
+// streams it wants to deal with.
+ogg_packet packet;
+while (!headersDone &amp;&amp;
+       (ret = ogg_stream_packetpeek(&amp;stream->mState, &amp;packet)) != 0) {
+assert(ret == 1);
+
+// A packet is available. If it is not a header packet we exit.
+// If it is a header packet, process it as normal.
+headersDone = headersDone || handle_theora_header(stream, &amp;packet);
+headersDone = headersDone || handle_vorbis_header(stream, &amp;packet);
+if (!headersDone) {
+  // Consume the packet
+  ret = ogg_stream_packetout(&amp;stream->mState, &amp;packet);
+  assert(ret == 1);
+}
+</pre>
+<p>To read packets for a particular stream I use a 'read_packet' function that operates on a stream passed as a parameter:</p>
+<pre>bool OggDecoder::read_packet(istream&amp; is, 
+                             ogg_sync_state* state, 
+                             OggStream* stream, 
+                             ogg_packet* packet) {
+  int ret = 0;
+
+  while ((ret = ogg_stream_packetout(&amp;stream->mState, packet)) != 1) {
+    ogg_page page;
+    if (!read_page(is, state, &amp;page))
+      return false;
+
+    int serial = ogg_page_serialno(&amp;page);
+    assert(mStreams.find(serial) != mStreams.end());
+    OggStream* pageStream = mStreams[serial];
+    
+    // Drop data for streams we're not interested in.
+    if (stream->mActive) {
+      ret = ogg_stream_pagein(&amp;pageStream->mState, &amp;page);
+      assert(ret == 0);
+    }
+  }
+  return true;
+}
+</pre>
+<p>If we need to read a new page (to be able to get more packets) we check the stream for the read page and if it is not for the stream we want we store the packet in the bitstream for that page so it can be retrieved later. I've added an 'active' flag to the streams so we can ignore streams that we aren't intersted in. We don't want to continuously buffer data for alternative audio tracks we aren't playing for example. The streams are marked inactive when the headers are finished reading.</p>
+<p>The code that does the checking to see if it's time to display a frame is:</p>
+<pre>
+// At this point we've written some audio data to the sound
+// system. Now we check to see if it's time to display a video
+// frame.
+//
+// The granule position of a video frame represents the time
+// that that frame should be displayed up to. So we get the
+// current time, compare it to the last granule position read.
+// If the time is greater than that it's time to display a new
+// video frame.
+//
+// The time is obtained from the audio system - this represents
+// the time of the audio data that the user is currently
+// listening to. In this way the video frame should be synced up
+// to the audio the user is hearing.
+//
+ogg_int64_t position = 0;
+int ret = sa_stream_get_position(mAudio, SA_POSITION_WRITE_SOFTWARE, &amp;position);
+assert(ret == SA_SUCCESS);
+float audio_time = 
+  float(position) /
+  float(audio->mVorbis.mInfo.rate) /
+  float(audio->mVorbis.mInfo.channels) /
+  sizeof(short);
+
+float video_time = th_granule_time(video->mTheora.mCtx, mGranulepos);
+if (audio_time > video_time) {
+  // Decode one frame and display it. If no frame is available we
+  // don't do anything.
+  ogg_packet packet;
+  if (read_packet(is, &amp;state, video, &amp;packet)) {
+    handle_theora_data(video, &amp;packet); 
+    video_time = th_granule_time(video->mTheora.mCtx, mGranulepos);
+  }
+}
+</pre>
+<p>The code for decoding and display the Theora video is similar to the <a href="http://www.bluishcoder.co.nz/2009/06/decoding-theora-files-using-libtheora.html">Theora decoding article</a>. The main difference is we store the granulepos in mGranulepos so we know when to stop displaying the frame.</p>
+<p>This version of 'plogg' should play Ogg files with a Theora and Vorbis track in sync. You can test it on <a href="http://www.double.co.nz/video_test/transformers320.ogg">the transformers trailer</a> for example. It does not play Theora files with no audio track - we can't synchronise to the audio clock if there is no audio. This can be worked around by falling back to delaying for the required framerate as the previous Theora example did.</p>
+<p>The a/v sync is not perfect however. If the video is large and decoding keyframes takes a while then we can fall behind in displaying the video and go out of sync. This is because we only play one frame when we check the time. One approach to fixing this is to decode, but not display, all frames up until the audio time rather than just the next time.</p>
+<p>The other issue is that the API call we are using to write to the audio hardware is blocking. This is using up valuable time that we could be using to decode a frame. When the write to the sound hardware returns we have very little time to decode a frame before glitches start appearing in the audio due to buffer underruns. Try playing a larger video (like <a href="http://tinyvid.tv/file/ah2ebubqurvy.ogg">the Ghostbusters HD Trailer</a> and the audio and video will skip (depending on the speed of your hardware). This isn't a pleasant experience. Because of the blocking audio writes we can't skip more than one frame due to the frame decoding time taking too long causing audio skip.</p>
+<p>The fixes for these aren't too complex and I'll go through it in my next article. The basic approach is to move to an asynchronous method of writing the audio, skip displaying frames when needed (to reduce the cost of the YUV decoding), skip decoding frames if possible (depending on location of keyframes we can do this), and to check how much audio data we have queued before decoding to always ensure we won't drop audio while decoding.</p>
+<p>With these fixes in place I can play the 1080p Ogg version of <a href="http://www.bigbuckbunny.org/index.php/download/">Big Buck Bunny</a> on a Macbook laptop (running Arch Linux) with no audio interruption  and with a/v syncing correctly. There is a fair amount of frame skipping however but it's a lot more watchable than if you try playing it without these modifications in place. And better than watching with the video lagging further and further behind the longer you watch it. Further improvements can be made to reduce the frame skipping by utilising threads to take advantage of extra core's on the PC.</p>
+<p>After the followup article on improving the a/v sync I'll look at covering seeking.</p>
