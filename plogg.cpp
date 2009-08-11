@@ -365,13 +365,13 @@ void OggDecoder::play(istream& is) {
 	ogg_int64_t position = 0;
 	int ret = sa_stream_get_position(mAudio, SA_POSITION_WRITE_SOFTWARE, &position);
 	assert(ret == SA_SUCCESS);
-	float audio_time = 
-	  float(position) /
-	  float(audio->mVorbis.mInfo.rate) /
-	  float(audio->mVorbis.mInfo.channels) /
+	double audio_time = 
+	  double(position) /
+	  double(audio->mVorbis.mInfo.rate) /
+	  double(audio->mVorbis.mInfo.channels) /
 	  sizeof(short);
 
-	float video_time = th_granule_time(video->mTheora.mCtx, mGranulepos);
+	double video_time = th_granule_time(video->mTheora.mCtx, mGranulepos);
 	if (audio_time > video_time) {
 	  // Decode one frame and display it. If no frame is available we
 	  // don't do anything.
