@@ -1,0 +1,5 @@
+What is libsydneyaudio designed to do?
+--------------------------------------
+
+The idea is to have a powerful, but easy to use cross-platform API for PCM audio capture and playback. So it would sit right on top of ALSA, pulseaudio, OSS, ... and abstract away all hardware-related complexity (e.g. having to check whether a card supports XYZ on ALSA before using it).
+

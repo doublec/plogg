@@ -1,0 +1,11 @@
+prefix=
+exec_prefix=
+libdir=${pcfiledir}/src/.libs
+includedir=${pcfiledir}/include
+
+Name: sydneyaudio
+Description: Sydneyaudio abstraction library
+Requires: 
+Version: @VERSION@
+Libs: -L${libdir} -lsydneyaudio
+Cflags: -I${includedir}
