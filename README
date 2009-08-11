@@ -34,7 +34,6 @@ The following are also required but included as submodules:
   - libogg
   - libtheora
   - libvorbis
-  - libsydneyaudio
 
 For a complete rebuild, including retrieval of this repository
 and submodules:
