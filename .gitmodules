@@ -7,6 +7,3 @@
 [submodule "thirdparty/libvorbis"]
 	path = thirdparty/libvorbis
 	url = git://bluishcoder.co.nz/git/libvorbis.git
-[submodule "thirdparty/libsydneyaudio"]
-	path = thirdparty/libsydneyaudio
-	url = git://bluishcoder.co.nz/git/libsydneyaudio.git
