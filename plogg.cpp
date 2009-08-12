@@ -149,12 +149,16 @@ public:
   }
 
   ~OggDecoder() {
+#if 0 // Crash occurs here in libsdl when exiting
+    if (mOverlay)
+      SDL_FreeYUVOverlay(mOverlay);
+    if (mSurface)
+      SDL_FreeSurface(mSurface);
+#endif
     if (mAudio) {
       sa_stream_drain(mAudio);
       sa_stream_destroy(mAudio);
     }
-    if (mSurface)
-      SDL_FreeSurface(mSurface);
   }
   void play(istream& stream);
 };
