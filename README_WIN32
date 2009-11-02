@@ -1,0 +1,30 @@
+Building plogg on win32 with Visual Studio 2005
+===============================================
+
+The following are also required but included as submodules:
+
+  - libogg
+  - libtheora
+  - libvorbis
+  - libsydneyaudio
+
+First retrieve the thirdparty submodules:
+
+  $ git clone git://github.com/doublec/plogg.git
+  $ cd plogg
+  $ git submodule init
+  $ git submodule update
+
+plogg also requires SDL to build. Download the SDL development library
+at www.libsdl.org, e.g:
+http://www.libsdl.org/release/SDL-devel-1.2.13-VC8.zip
+
+Extract the SDL-devel library, and copy the contents of the SDL-devel
+include/ directory into plogg/thirdparty/SDL/include/SDL .
+Copy the SDL-devel lib directory to plogg/thirdparty/SDL.lib .
+
+Once all the thirdparty libraries are downloaded, you can build everything
+with the plogg solution file in win32/VS2005/plogg.sln.
+
+You'll need to copy SDL.dll from the SDL-devel/lib directory into the same 
+directory as your plogg.exe, or into C:\Windows\System32.
