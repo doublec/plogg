@@ -153,8 +153,10 @@ public:
       sa_stream_drain(mAudio);
       sa_stream_destroy(mAudio);
     }
-    if (mSurface)
+    if (mSurface) {
       SDL_FreeSurface(mSurface);
+      mSurface = 0;
+    }
   }
   void play(istream& stream);
 };
@@ -327,7 +329,8 @@ void OggDecoder::play(istream& is) {
     while ((samples = vorbis_synthesis_pcmout(&audio->mVorbis.mDsp, &pcm)) > 0) {
       if (mAudio) {
 	if (samples > 0) {
-	  short buffer[samples * audio->mVorbis.mInfo.channels];
+          size_t size = samples * audio->mVorbis.mInfo.channels;
+          short* buffer = new short[size];
 	  short* p = buffer;
 	  for (int i=0;i < samples; ++i) {
 	    for(int j=0; j < audio->mVorbis.mInfo.channels; ++j) {
@@ -338,8 +341,9 @@ void OggDecoder::play(istream& is) {
 	    }
 	  }
 	  
-	  ret = sa_stream_write(mAudio, buffer, sizeof(buffer));
+          ret = sa_stream_write(mAudio, buffer, sizeof(*buffer)*size);
 	  assert(ret == SA_SUCCESS);
+          delete[] buffer;
 	}
 	
 	ret = vorbis_synthesis_read(&audio->mVorbis.mDsp, samples);
@@ -363,7 +367,11 @@ void OggDecoder::play(istream& is) {
       //
       if (video) {
 	ogg_int64_t position = 0;
-	int ret = sa_stream_get_position(mAudio, SA_POSITION_WRITE_SOFTWARE, &position);
+        sa_position_t positionType = SA_POSITION_WRITE_SOFTWARE;
+#if defined(WIN32)
+        positionType = SA_POSITION_WRITE_HARDWARE;
+#endif	
+        int ret = sa_stream_get_position(mAudio, positionType, &position);
 	assert(ret == SA_SUCCESS);
 	float audio_time = 
 	  float(position) /
@@ -399,8 +407,6 @@ void OggDecoder::play(istream& is) {
   // Cleanup
   ret = ogg_sync_clear(&state);
   assert(ret == 0);
-
-  SDL_Quit();
 }
 
 bool OggDecoder::handle_theora_header(OggStream* stream, ogg_packet* packet) {
@@ -515,9 +521,10 @@ void usage() {
   cout << "Usage: plogg <filename>" << endl;
 }
 
-int main(int argc, const char* argv[]) {
+int main(int argc, char* argv[]) {
   if (argc != 2) { 
     usage();
+    return 0;
   }
 
   ifstream file(argv[1], ios::in | ios::binary);
@@ -532,7 +539,7 @@ int main(int argc, const char* argv[]) {
       delete stream;
     }
   }
-  
+  SDL_Quit();
   return 0;
 }
 // Copyright (C) 2009 Chris Double. All Rights Reserved.
