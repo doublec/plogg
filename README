@@ -28,25 +28,19 @@ You will need the following third party libraries to build:
 
   - boost
   - SDL
-
-The following are also required but included as submodules:
-
   - libogg
   - libtheora
   - libvorbis
   - libsydneyaudio
 
-For a complete rebuild, including retrieval of this repository
-and submodules:
+To build:
 
   $ git clone git://github.com/doublec/plogg.git
   $ cd plogg
-  $ git submodule init
-  $ git submodule update
   $ make
 
 Links to Ogg documentation:
 
   libogg         - http://www.xiph.org/ogg/doc/libogg/
-  libtheora      - http://theora.org/doc/libtheora-1.0/
+  libtheora      - http://theora.org/doc/libtheora-1.1/
   libvorbis      - http://xiph.org/vorbis/doc/
