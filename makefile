@@ -11,18 +11,6 @@ endif
 
 all: plogg
 
-local/lib/libogg.a: thirdparty/build.sh
-	cd thirdparty && ./build.sh && cd ..
-
-local/lib/libtheora.a: thirdparty/build.sh
-	cd thirdparty && ./build.sh && cd ..
-
-local/lib/libvorbis.a: thirdparty/build.sh
-	cd thirdparty && ./build.sh && cd ..
-
-local/lib/libsydneyaudio.a: thirdparty/build.sh
-	cd thirdparty && ./build.sh && cd ..
-
 plogg.o: plogg.cpp 
 	g++ -g -c $(INCLUDE) -o plogg.o plogg.cpp
 
